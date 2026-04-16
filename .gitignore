@@ -1,0 +1,8 @@
+*.pth
+*.pt
+*.pyc
+.ipynb
+마스크*.py
+.jpg
+.json
+dataset*/
