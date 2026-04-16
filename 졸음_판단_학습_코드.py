@@ -62,10 +62,19 @@ def train_model(model, criterion, optimizer, num_epochs=25, patience=5, dataset_
             # 검증 단계: 성능 개선 시 가중치 저장 및 조기 종료 체크
             if phase == 'val':
                 if epoch_acc > best_acc:
+                    # 이전 베스트 파일이 있다면 삭제 (폴더가 지저분해지는 것을 방지)
+                    old_checkpoint = f'best_vision_guard_v2({best_acc:.2%}).pth'
+                    if os.path.exists(old_checkpoint):
+                        os.remove(old_checkpoint)
                     best_acc = epoch_acc
                     best_model_wts = copy.deepcopy(model.state_dict())
+
+                    # 새로운 파일명 생성: best_vision_guard_v2(88.77%).pth 형식
+                    # .2%는 0.8877을 88.77%로 변환해줍니다.
+                    current_filename = f'best_vision_guard_v2({best_acc:.2%}).pth'
+
                     # 성능이 개선될 때마다 'best_vision_guard_v2.pth' 갱신
-                    torch.save(best_model_wts, 'best_vision_guard_v2.pth')
+                    torch.save(best_model_wts, current_filename)
                     print(f"새로운 베스트 모델 저장 완료! (Acc: {best_acc:.4f})")
                     early_stop_counter = 0
                 else:
@@ -120,9 +129,17 @@ if __name__ == '__main__':
     model.classifier[1] = nn.Linear(model.last_channel, 2)
     model = model.to(device)
 
-    # 4. 이전 학습 가중치 불러오기 (Resume)
-    checkpoint_path = 'best_vision_guard_v2.pth'
-    if os.path.exists(checkpoint_path):
+    # 4. 이전 학습 가중치 불러오기 (Resume) - 파일명 유동적 대응
+    prefix = "best_vision_guard_v2"
+    checkpoint_path = None
+
+    # 현재 폴더에서 해당 접두사로 시작하는 가장 최신 .pth 파일 찾기
+    for file in os.listdir('.'):
+        if file.startswith(prefix) and file.endswith(".pth"):
+            checkpoint_path = file
+            break # 가장 먼저 발견된 파일을 타겟으로 설정
+    
+    if checkpoint_path and os.path.exists(checkpoint_path):
         # 보안 경고 해결을 위해 weights_only=True 권장 (PyTorch 최신버전 대응)
         model.load_state_dict(torch.load(checkpoint_path, weights_only=True))
         print(f"가중치 로드 성공: {checkpoint_path} (이전 학습 내용을 이어서 시작합니다.)")
