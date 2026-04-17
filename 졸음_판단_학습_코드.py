@@ -79,9 +79,12 @@ def train_model(
             if phase == 'val':
                 # 스케줄러에게 현재 검증 정확도를 알려줍니다.
                 if scheduler is not None:
+                    current_lr = optimizer.param_groups[0]['lr']
+                    print(f"⏱️ 스케줄러 점검: 검증 정확도 {epoch_acc:.2%} 기준으로 학습률을 확인합니다. (현재 lr={current_lr:.6f})")
                     scheduler.step(epoch_acc)
                 
                 if epoch_acc > best_acc:
+                    previous_best_acc = best_acc
                     # 기존 베스트 파일들 삭제
                     prefix = model_prefix
                     for file in os.listdir('.'):
@@ -98,7 +101,7 @@ def train_model(
                     current_filename = f'{model_prefix}({best_acc:.2%}).pth'
                     torch.save(best_model_wts, current_filename)
                     
-                    print(f"🔥 신기록 달성! 모델 저장 완료: {current_filename}")
+                    print(f"🔥 신기록 달성! 기존 성적 {previous_best_acc:.2%}에서 신기록 성적 {best_acc:.2%}로 갱신하여 모델 저장 완료: {current_filename}")
                     early_stop_counter = 0
                 else:
                     early_stop_counter += 1
