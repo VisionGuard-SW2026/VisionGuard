@@ -1,0 +1,10 @@
+DEFAULT_CONFIG = {
+    "BATCH_SIZE": 32,
+    "NUM_WORKERS": 4,
+    "NUM_EPOCHS": 200,
+    "LEARNING_RATE": 0.0001,
+    "EARLY_STOP_PATIENCE": 5,
+    "SCHEDULER_PATIENCE": 3,
+    "SCHEDULER_FACTOR": 0.1,
+    "MODEL_PREFIX": "best_vision_guard_v2",
+}

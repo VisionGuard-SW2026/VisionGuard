@@ -9,12 +9,27 @@ import warnings
 import re # 파일명에서 숫자 추출을 위해 추가
 from tqdm import tqdm
 from PIL import ImageFile
+from config import DEFAULT_CONFIG
+from dotenv import load_dotenv
 
 # 1. 환경 설정 및 안정성 확보
 warnings.filterwarnings("ignore", category=UserWarning)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-def train_model(model, criterion, optimizer, num_epochs=25, patience=5, dataset_sizes=None, dataloaders=None, device=None, initial_best_acc=0.0, scheduler=None):
+
+def train_model(
+        model,
+        criterion,
+        optimizer,
+        num_epochs,
+        patience,
+        dataset_sizes,
+        dataloaders,
+        device,
+        initial_best_acc,
+        scheduler,
+        model_prefix,
+    ):
     best_model_wts = copy.deepcopy(model.state_dict())
     # 불러온 파일의 정확도를 초기 최고점으로 설정
     best_acc = initial_best_acc 
@@ -68,7 +83,7 @@ def train_model(model, criterion, optimizer, num_epochs=25, patience=5, dataset_
                 
                 if epoch_acc > best_acc:
                     # 기존 베스트 파일들 삭제
-                    prefix = "best_vision_guard_v2"
+                    prefix = model_prefix
                     for file in os.listdir('.'):
                         if file.startswith(prefix) and file.endswith(".pth"):
                             try:
@@ -80,7 +95,7 @@ def train_model(model, criterion, optimizer, num_epochs=25, patience=5, dataset_
                     best_model_wts = copy.deepcopy(model.state_dict())
                     
                     # 새 파일명 저장
-                    current_filename = f'best_vision_guard_v2({best_acc:.2%}).pth'
+                    current_filename = f'{model_prefix}({best_acc:.2%}).pth'
                     torch.save(best_model_wts, current_filename)
                     
                     print(f"🔥 신기록 달성! 모델 저장 완료: {current_filename}")
@@ -96,8 +111,20 @@ def train_model(model, criterion, optimizer, num_epochs=25, patience=5, dataset_
     return model
 
 if __name__ == '__main__':
-    data_dir = r"C:\Users\임상혁\Desktop\VisionGuard\VG Data\데이터 전처리 파일\dataset_final_v2"
-    batch_size = 64
+    load_dotenv()
+    config = DEFAULT_CONFIG
+    data_dir = os.getenv("VG_DATA_DIR", "").strip()
+    if not data_dir:
+        raise ValueError("필수 환경변수 'VG_DATA_DIR'가 설정되지 않았습니다. .env 또는 실행 환경에 값을 넣어주세요.")
+    batch_size = config["BATCH_SIZE"]
+    num_workers = config["NUM_WORKERS"]
+    num_epochs = config["NUM_EPOCHS"]
+    early_stop_patience = config["EARLY_STOP_PATIENCE"]
+    learning_rate = config["LEARNING_RATE"]
+    scheduler_factor = config["SCHEDULER_FACTOR"]
+    scheduler_patience = config["SCHEDULER_PATIENCE"]
+    model_prefix = config["MODEL_PREFIX"]
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # 2. 데이터셋 로드 설정
@@ -120,12 +147,12 @@ if __name__ == '__main__':
 
     image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x])
                       for x in ['train', 'val']}
-    dataloaders = {x: DataLoader(image_datasets[x], batch_size=batch_size, shuffle=True, num_workers=4)
+    dataloaders = {x: DataLoader(image_datasets[x], batch_size=batch_size, shuffle=True, num_workers=num_workers)
                    for x in ['train', 'val']}
     dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
 
     # 3. 가중치 탐색 및 최고 정확도 추출 로직
-    prefix = "best_vision_guard_v2"
+    prefix = model_prefix
     checkpoint_path = None
     best_acc_from_file = 0.0
 
@@ -151,20 +178,27 @@ if __name__ == '__main__':
     else:
         print("기존 가중치 파일이 없습니다. 0.0%부터 학습을 시작합니다.")
 
-    optimizer = optim.Adam(model.parameters(), lr=0.0001)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     criterion = nn.CrossEntropyLoss()
     
     # 스케줄러 정의: 3에포크 동안 정확도 안 오르면 lr을 1/10로 감소
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=3, verbose=True)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode='max',
+        factor=scheduler_factor,
+        patience=scheduler_patience,
+        verbose=True
+    )
 
     # 5. 학습 시작 (추출한 정확도를 인자로 전달)
     model_ft = train_model(
         model, criterion, optimizer,
-        num_epochs=200,
-        patience=10,
+        num_epochs=num_epochs,
+        patience=early_stop_patience,
         dataset_sizes=dataset_sizes,
         dataloaders=dataloaders,
         device=device,
         initial_best_acc=best_acc_from_file,
-        scheduler=scheduler
+        scheduler=scheduler,
+        model_prefix=model_prefix,
     )
