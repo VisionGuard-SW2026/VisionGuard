@@ -160,7 +160,8 @@ if __name__ == '__main__':
     # 5. 학습 시작 (추출한 정확도를 인자로 전달)
     model_ft = train_model(
         model, criterion, optimizer,
-        num_epochs=200, patience=3,
+        num_epochs=200,
+        patience=10,
         dataset_sizes=dataset_sizes,
         dataloaders=dataloaders,
         device=device,
