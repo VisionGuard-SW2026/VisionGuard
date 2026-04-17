@@ -14,7 +14,7 @@ from PIL import ImageFile
 warnings.filterwarnings("ignore", category=UserWarning)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-def train_model(model, criterion, optimizer, num_epochs=25, patience=5, dataset_sizes=None, dataloaders=None, device=None, initial_best_acc=0.0):
+def train_model(model, criterion, optimizer, num_epochs=25, patience=5, dataset_sizes=None, dataloaders=None, device=None, initial_best_acc=0.0, scheduler=None):
     best_model_wts = copy.deepcopy(model.state_dict())
     # 불러온 파일의 정확도를 초기 최고점으로 설정
     best_acc = initial_best_acc 
@@ -62,6 +62,10 @@ def train_model(model, criterion, optimizer, num_epochs=25, patience=5, dataset_
 
             # 검증 단계: 이전 최고 기록(best_acc)을 넘을 때만 저장
             if phase == 'val':
+                # 스케줄러에게 현재 검증 정확도를 알려줍니다.
+                if scheduler is not None:
+                    scheduler.step(epoch_acc)
+                
                 if epoch_acc > best_acc:
                     # 기존 베스트 파일들 삭제
                     prefix = "best_vision_guard_v2"
@@ -147,13 +151,17 @@ if __name__ == '__main__':
 
     optimizer = optim.Adam(model.parameters(), lr=0.0001)
     criterion = nn.CrossEntropyLoss()
+    
+    # 스케줄러 정의: 3에포크 동안 정확도 안 오르면 lr을 1/10로 감소
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=3, verbose=True)
 
     # 5. 학습 시작 (추출한 정확도를 인자로 전달)
     model_ft = train_model(
-        model, criterion, optimizer, 
-        num_epochs=200, patience=5, 
-        dataset_sizes=dataset_sizes, 
-        dataloaders=dataloaders, 
+        model, criterion, optimizer,
+        num_epochs=200, patience=3,
+        dataset_sizes=dataset_sizes,
+        dataloaders=dataloaders,
         device=device,
-        initial_best_acc=best_acc_from_file
+        initial_best_acc=best_acc_from_file,
+        scheduler=scheduler
     )
