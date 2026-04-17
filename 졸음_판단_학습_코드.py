@@ -105,7 +105,9 @@ if __name__ == '__main__':
         'train': transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.RandomHorizontalFlip(),
-            transforms.ColorJitter(brightness=0.2, contrast=0.2),
+            transforms.RandomRotation(15),       # 고개 꺾임 대비 (최대 15도)
+            transforms.GaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0)), # 초점 흐려짐 대비
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2), # 더 강한 조명 변화
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]),
