@@ -113,6 +113,26 @@ def train_model(
 
     return model
 
+def predict_drowsiness(image_tensor, ear_value):
+    """
+    학습된 모델과 EAR 수치를 결합하여 최종 판단을 내리는 함수 (실전용)
+    """
+    # 1. 비전 모델 예측
+    model.eval()
+    with torch.no_grad():
+        output = model(image_tensor)
+        prob = torch.softmax(output, dim=1)
+        vision_score = prob[0][0].item() # 졸음(drowsy) 클래스 확률
+
+    # 2. EAR 기반 보정 (EAR이 낮을수록 졸음 확률 가산)
+    ear_threshold = 0.22
+    ear_bonus = 0.2 if ear_value < ear_threshold else 0.0
+    
+    # 3. 최종 판단
+    final_score = (vision_score * 0.8) + ear_bonus
+    
+    return "Drowsy" if final_score > 0.6 else "Normal"
+
 if __name__ == '__main__':
     load_dotenv()
     config = DEFAULT_CONFIG
