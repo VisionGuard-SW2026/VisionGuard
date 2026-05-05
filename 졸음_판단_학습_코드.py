@@ -182,7 +182,11 @@ if __name__ == '__main__':
         print("기존 가중치 파일이 없습니다. 0.0%부터 학습을 시작합니다.")
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    criterion = nn.CrossEntropyLoss()
+
+    # 현재 데이터 비율(정상 11.5만 : 졸음 7.1만)을 고려하여 졸음에 약 1.6배 가중치 부여
+    weights = torch.tensor([1.6, 1.0], device=device) # [drowsy, normal] 순서
+    # criterion에 weight를 전달하여 적용
+    criterion = nn.CrossEntropyLoss(weight=weights)
     
     # 스케줄러 정의: 3에포크 동안 정확도 안 오르면 lr을 1/10로 감소
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
