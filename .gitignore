@@ -1,7 +1,11 @@
 *.pth
 *.pt
 *.pyc
+*.py[cod]
+__pycache__/
 .ipynb
 마스크*.py
 dataset*/
 .env
+venv/
+.vscode/
