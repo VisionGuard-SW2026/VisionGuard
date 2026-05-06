@@ -178,10 +178,10 @@ if __name__ == '__main__':
     data_transforms = {
         'train': transforms.Compose([
             transforms.Resize((224, 224)),
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(15),       # 고개 꺾임 대비 (최대 15도)
-            transforms.GaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0)), # 초점 흐려짐 대비
-            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2), # 더 강한 조명 변화
+            # transforms.RandomHorizontalFlip(),
+            # transforms.RandomRotation(15),       # 고개 꺾임 대비 (최대 15도)
+            # transforms.GaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0)), # 초점 흐려짐 대비
+            # transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2), # 조명 변화
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]),
@@ -224,8 +224,14 @@ if __name__ == '__main__':
                     checkpoint_path = file
 
     # 4. 모델 설정 및 로드
-    model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
-    model.classifier[1] = nn.Linear(model.last_channel, 2)
+    # model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
+    # model.classifier[1] = nn.Linear(model.last_channel, 2)
+    # model = model.to(device)
+
+    # 기존 MobileNet_V2 대신 ResNet50을 사용
+    model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+    num_ftrs = model.fc.in_features
+    model.fc = nn.Linear(num_ftrs, 2)
     model = model.to(device)
 
     if checkpoint_path:
@@ -234,14 +240,14 @@ if __name__ == '__main__':
     else:
         print("기존 가중치 파일이 없습니다. 0.0%부터 학습을 시작합니다.")
 
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    # optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
-    # 현재 데이터 비율(정상 11.5만 : 졸음 7.1만)을 고려하여 졸음에 약 1.6배 가중치 부여
+    # 데이터 비율을 고려하여 졸음에 1.6배 가중치 부여
     weights = torch.tensor([1.6, 1.0], device=device) # [drowsy, normal] 순서
-    # criterion에 weight를 전달하여 적용
     criterion = nn.CrossEntropyLoss(weight=weights)
     
-    # 스케줄러 정의: 3에포크 동안 정확도 안 오르면 lr을 1/10로 감소
+    # 스케줄러: 3에포크 동안 정확도가 안 오르면 lr을 1/10로 감소
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
         mode='max',
