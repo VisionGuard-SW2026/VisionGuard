@@ -3,17 +3,26 @@ import os
 import shutil
 from pathlib import Path
 from tqdm import tqdm
+from dotenv import load_dotenv
 
 # 1. 경로 설정
 CURRENT_DIR = Path(__file__).resolve().parent
-# 상혁님의 폴더 구조에 맞춰 최상위 경로를 잡습니다.
-BASE_PATH = Path(r"C:\Users\임상혁\Desktop\VisionGuard\VG Data\기본 데이터 파일")
-SAVE_ROOT = CURRENT_DIR / "dataset_final_v2"
+load_dotenv()
+root_str = os.getenv("VG_DATA_ROOT", "")
+if not root_str:
+    raise ValueError("VG_DATA_ROOT가 .env에 없습니다.")
+VG_DATA_ROOT = Path(root_str).expanduser()
+BASE_PATH = VG_DATA_ROOT / "기본 데이터 파일" / "졸음운전 예방을 위한 운전자 상태 정보 영상"
+SAVE_ROOT = VG_DATA_ROOT / "데이터 전처리 파일" / "dataset_final_v2"
 
 # [핵심 수정] 실제 폴더명인 '[원천]bbox'로 경로를 지정해야 합니다.
 IMG_DIRS = [
-    BASE_PATH / "[원천]bbox(실제도로환경)",
-    BASE_PATH / "[원천]bbox(통제환경)"
+    BASE_PATH / "Training" / "[원천]bbox(실제도로환경)",
+    BASE_PATH / "Training" / "[원천]bbox(통제환경)",
+    BASE_PATH / "Training" / "[원천]keypoint(준통제환경)",
+    BASE_PATH / "Validation" / "[원천]bbox(실제도로환경)",
+    BASE_PATH / "Validation" / "[원천]bbox(통제환경)",
+    BASE_PATH / "Validation" / "[원천]keypoint(준통제환경)",
 ]
 
 # 2. 정답지 로드
@@ -56,7 +65,7 @@ else:
         if hash(img_name) % 10 < 8:
             phase = "train"
         else:
-            phase = "val"
+            phase = "valid"
         
         target_dir = SAVE_ROOT / phase / label_name
         target_dir.mkdir(parents=True, exist_ok=True)
