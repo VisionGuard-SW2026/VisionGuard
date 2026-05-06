@@ -1,8 +1,16 @@
 import os
+from pathlib import Path
+
 from PIL import Image
+from dotenv import load_dotenv
 from tqdm import tqdm
 
-data_dir = r"C:\Users\임상혁\Desktop\VisionGuard\VG Data\데이터 전처리 파일\dataset_final_v2"
+load_dotenv()
+root_str = os.getenv("VG_DATA_ROOT", "")
+if not root_str:
+    raise ValueError("VG_DATA_ROOT가 .env에 없습니다.")
+VG_DATA_ROOT = Path(root_str).expanduser()
+data_dir = VG_DATA_ROOT / "데이터 전처리 파일" / "dataset_final_v2"
 
 print("불량 이미지 검사 시작...")
 for root, dirs, files in os.walk(data_dir):
