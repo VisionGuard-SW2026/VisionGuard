@@ -7,6 +7,7 @@ import os
 import copy
 import warnings
 import re # 파일명에서 숫자 추출을 위해 추가
+from pathlib import Path
 from tqdm import tqdm
 from PIL import ImageFile
 from config import DEFAULT_CONFIG
@@ -41,7 +42,7 @@ def train_model(
         print(f'\nEpoch {epoch+1}/{num_epochs}')
         print('-' * 10)
 
-        for phase in ['train', 'val']:
+        for phase in ['train', 'valid']:
             if phase == 'train':
                 model.train()
             else:
@@ -76,7 +77,7 @@ def train_model(
             print(f'{phase} Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
 
             # 검증 단계: 이전 최고 기록(best_acc)을 넘을 때만 저장
-            if phase == 'val':
+            if phase == 'valid':
                 # 스케줄러에게 현재 검증 정확도를 알려줍니다.
                 if scheduler is not None:
                     current_lr = optimizer.param_groups[0]['lr']
@@ -136,9 +137,32 @@ def predict_drowsiness(image_tensor, ear_value):
 if __name__ == '__main__':
     load_dotenv()
     config = DEFAULT_CONFIG
-    data_dir = os.getenv("VG_DATA_DIR", "").strip()
-    if not data_dir:
-        raise ValueError("필수 환경변수 'VG_DATA_DIR'가 설정되지 않았습니다. .env 또는 실행 환경에 값을 넣어주세요.")
+    # 데이터 경로는 VG_DATA_ROOT 기준으로만 구성합니다.
+    # (선택) VG_DATASET_REL: VG Data 루트 + 상대경로 (기본값: 데이터 전처리 파일\\dataset_final_v2)
+    vg_data_root_raw = os.getenv("VG_DATA_ROOT", "").strip().strip('"').strip("'")
+    if not vg_data_root_raw:
+        raise ValueError(
+            "필수 환경변수 'VG_DATA_ROOT'가 설정되지 않았습니다. "
+            ".env 또는 실행 환경에 값을 넣어주세요. "
+        )
+    vg_dataset_rel = (
+        os.getenv("VG_DATASET_REL", r"데이터 전처리 파일\dataset_final_v2")
+        .strip()
+        .strip('"')
+        .strip("'")
+    )
+    data_dir = Path(vg_data_root_raw) / vg_dataset_rel
+
+    train_dir = data_dir / "train"
+    valid_dir = data_dir / "valid"
+
+    if not train_dir.exists() or not valid_dir.exists():
+        raise ValueError(
+            "학습 데이터 폴더를 찾지 못했습니다. 아래 경로에 'train', 'valid' 폴더가 있어야 합니다.\n"
+            f"- 계산된 경로: {data_dir}\n"
+            f"- 확인: train={train_dir.exists()}, valid={valid_dir.exists()}\n"
+            "- 해결: VG_DATA_ROOT / VG_DATASET_REL(상대경로)을 올바르게 지정하세요."
+        )
     batch_size = config["BATCH_SIZE"]
     num_workers = config["NUM_WORKERS"]
     num_epochs = config["NUM_EPOCHS"]
@@ -161,29 +185,38 @@ if __name__ == '__main__':
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]),
-        'val': transforms.Compose([
+        'valid': transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]),
     }
 
-    image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x), data_transforms[x])
-                      for x in ['train', 'val']}
-    dataloaders = {x: DataLoader(image_datasets[x], batch_size=batch_size, shuffle=True, num_workers=num_workers)
-                   for x in ['train', 'val']}
-    dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
+    image_datasets = {
+        x: datasets.ImageFolder(str(data_dir / x), data_transforms[x]) for x in ["train", "valid"]
+    }
+    dataloaders = {
+        x: DataLoader(
+            image_datasets[x],
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+        )
+        for x in ["train", "valid"]
+    }
+    dataset_sizes = {x: len(image_datasets[x]) for x in ["train", "valid"]}
 
     # 3. 가중치 탐색 및 최고 정확도 추출 로직
     prefix = model_prefix
     checkpoint_path = None
     best_acc_from_file = 0.0
+    model_out_dir = Path(".")
 
     # 현재 폴더 내 파일 중 가장 높은 정확도를 가진 파일 찾기
-    for file in os.listdir('.'):
-        if file.startswith(prefix) and file.endswith(".pth"):
+    for file in model_out_dir.iterdir():
+        if file.is_file() and file.name.startswith(prefix) and file.suffix == ".pth":
             # 정규표현식으로 (88.77%) 형태에서 숫자 추출
-            match = re.search(r"\((\d+\.?\d*)%\)", file)
+            match = re.search(r"\((\d+\.?\d*)%\)", file.name)
             if match:
                 acc_val = float(match.group(1)) / 100.0
                 if acc_val > best_acc_from_file:
@@ -196,7 +229,7 @@ if __name__ == '__main__':
     model = model.to(device)
 
     if checkpoint_path:
-        model.load_state_dict(torch.load(checkpoint_path, weights_only=True))
+        model.load_state_dict(torch.load(str(checkpoint_path), weights_only=True))
         print(f"가중치 로드 성공: {checkpoint_path} (기존 기록 {best_acc_from_file:.2%}부터 시작)")
     else:
         print("기존 가중치 파일이 없습니다. 0.0%부터 학습을 시작합니다.")
@@ -214,7 +247,6 @@ if __name__ == '__main__':
         mode='max',
         factor=scheduler_factor,
         patience=scheduler_patience,
-        verbose=True
     )
 
     # 5. 학습 시작 (추출한 정확도를 인자로 전달)

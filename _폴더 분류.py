@@ -58,8 +58,8 @@ else:
             label_name = "drowsy"
         else:
             # 키워드가 없는 경우는 npy 값을 따름
-            label_val = true_labels[i]
-            label_name = "normal" if label_val == 0 else "drowsy"
+            label_valid = true_labels[i]
+            label_name = "normal" if label_valid == 0 else "drowsy"
         
         # [8:2 분할]
         if hash(img_name) % 10 < 8:
