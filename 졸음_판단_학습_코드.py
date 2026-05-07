@@ -1,4 +1,5 @@
 import torch
+torch.cuda.empty_cache()
 import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets, models, transforms
@@ -177,7 +178,7 @@ if __name__ == '__main__':
     # 2. 데이터셋 로드 설정
     data_transforms = {
         'train': transforms.Compose([
-            transforms.Resize((224, 224)),
+            transforms.Resize((448, 448)),
             # transforms.RandomHorizontalFlip(),
             # transforms.RandomRotation(15),       # 고개 꺾임 대비 (최대 15도)
             # transforms.GaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0)), # 초점 흐려짐 대비
@@ -186,7 +187,7 @@ if __name__ == '__main__':
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]),
         'valid': transforms.Compose([
-            transforms.Resize((224, 224)),
+            transforms.Resize((448, 448)),
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]),
@@ -201,6 +202,7 @@ if __name__ == '__main__':
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
+            pin_memory=False
         )
         for x in ["train", "valid"]
     }
@@ -244,7 +246,7 @@ if __name__ == '__main__':
     optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
     # 데이터 비율을 고려하여 졸음에 1.6배 가중치 부여
-    weights = torch.tensor([1.6, 1.0], device=device) # [drowsy, normal] 순서
+    weights = torch.tensor([2, 1.0], device=device) # [drowsy, normal] 순서
     criterion = nn.CrossEntropyLoss(weight=weights)
     
     # 스케줄러: 3에포크 동안 정확도가 안 오르면 lr을 1/10로 감소
