@@ -115,25 +115,44 @@ def train_model(
 
     return model
 
-def predict_drowsiness(image_tensor, ear_value):
+def predict_drowsiness(image_tensor, ear_value, config):
     """
-    학습된 모델과 EAR 수치를 결합하여 최종 판단을 내리는 함수 (실전용)
+    비전 모델(Vision Guard)과 EAR(수치)을 결합한 앙상블 판단 함수
     """
-    # 1. 비전 모델 예측
+    # 1. 비전 모델 예측 (CNN의 판단)
     model.eval()
     with torch.no_grad():
         output = model(image_tensor)
         prob = torch.softmax(output, dim=1)
-        vision_score = prob[0][0].item() # 졸음(drowsy) 클래스 확률
+        # 졸음(drowsy) 클래스가 0번 인덱스라고 가정
+        vision_score = prob[0][0].item() 
 
-    # 2. EAR 기반 보정 (EAR이 낮을수록 졸음 확률 가산)
+    # 2. EAR 기반 가중치 계산 (Step 4 앙상블 로직)
+    # EAR 임계값 기준은 기존과 동일하게 0.22를 유지합니다.
     ear_threshold = 0.22
-    ear_bonus = 0.2 if ear_value < ear_threshold else 0.0
     
-    # 3. 최종 판단
-    final_score = (vision_score * 0.8) + ear_bonus
+    # 모델의 신뢰도와 EAR의 수치를 8:2 비율로 혼합하거나, 
+    # EAR이 임계값보다 낮을 때 확실한 가중치를 부여합니다.
+    if ear_value < ear_threshold:
+        # 눈이 감겼을 가능성이 매우 높으므로 비전 점수에 강한 가중치 합산
+        # 0.2의 보너스는 89% 고지에서 90%를 뚫어줄 결정적 한 방이 됩니다.
+        ear_influence = 0.25 
+    else:
+        ear_influence = 0.0
+
+    # 3. 최종 앙상블 점수 산출
+    # 비전 모델의 판단 75% + EAR의 수치적 증거 25% 조합
+    final_score = (vision_score * 0.75) + ear_influence
     
-    return "Drowsy" if final_score > 0.6 else "Normal"
+    # 4. 최종 판정 (기준치 0.6)
+    is_drowsy = final_score > 0.6
+    
+    return {
+        "status": "Drowsy" if is_drowsy else "Normal",
+        "score": final_score,
+        "vision_part": vision_score,
+        "ear_part": ear_influence
+    }
 
 if __name__ == '__main__':
     load_dotenv()
@@ -185,7 +204,7 @@ if __name__ == '__main__':
     data_transforms = {
         'train': transforms.Compose([
             transforms.Resize(512),
-            transforms.CenterCrop(512),
+            transforms.CenterCrop(488),
             # transforms.RandomHorizontalFlip(),
             # transforms.RandomRotation(15),       # 고개 꺾임 대비 (최대 15도)
             # transforms.GaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0)), # 초점 흐려짐 대비
@@ -195,7 +214,7 @@ if __name__ == '__main__':
         ]),
         'valid': transforms.Compose([
             transforms.Resize(512),
-            transforms.CenterCrop(512),
+            transforms.CenterCrop(488),
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]),
