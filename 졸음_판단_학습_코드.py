@@ -41,7 +41,7 @@ def train_model(
 
     for epoch in range(num_epochs):
         print(f'\nEpoch {epoch+1}/{num_epochs}')
-        print('-' * 10)
+        print('-' * 12)
 
         for phase in ['train', 'valid']:
             if phase == 'train':
@@ -107,7 +107,7 @@ def train_model(
                     early_stop_counter = 0
                 else:
                     early_stop_counter += 1
-                    print(f"현재 성적({epoch_acc:.2%})이 기존 최고 성적({best_acc:.2%})에 미치지 못해 저장하지 않습니다.")
+                    print(f"현재 성적({epoch_acc:.2%})이 기존 최고 성적({best_acc:.2%})에 미치지 못해 저장하지 않았습니다.")
 
         if early_stop_counter >= patience:
             print(f"\n성능 개선 없음 ({patience} epochs). 조기 종료!")
@@ -164,6 +164,8 @@ if __name__ == '__main__':
             f"- 확인: train={train_dir.exists()}, valid={valid_dir.exists()}\n"
             "- 해결: VG_DATA_ROOT / VG_DATASET_REL(상대경로)을 올바르게 지정하세요."
         )
+    
+    # 모델 설정 로드
     batch_size = config["BATCH_SIZE"]
     num_workers = config["NUM_WORKERS"]
     num_epochs = config["NUM_EPOCHS"]
@@ -171,14 +173,19 @@ if __name__ == '__main__':
     learning_rate = config["LEARNING_RATE"]
     scheduler_factor = config["SCHEDULER_FACTOR"]
     scheduler_patience = config["SCHEDULER_PATIENCE"]
-    model_prefix = config["MODEL_PREFIX"]
+    model_name = config["MODEL_NAME"]
+    model_prefix = f"{model_name}_{config['MODEL_PREFIX']}"
 
+    # 옵티마이저 설정 로드
+    optimizer_name = config.get("OPTIMIZER_NAME")
+    weight_decay = config.get("WEIGHT_DECAY")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # 2. 데이터셋 로드 설정
     data_transforms = {
         'train': transforms.Compose([
-            transforms.Resize((448, 448)),
+            transforms.Resize(512),
+            transforms.CenterCrop(512),
             # transforms.RandomHorizontalFlip(),
             # transforms.RandomRotation(15),       # 고개 꺾임 대비 (최대 15도)
             # transforms.GaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0)), # 초점 흐려짐 대비
@@ -187,7 +194,8 @@ if __name__ == '__main__':
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]),
         'valid': transforms.Compose([
-            transforms.Resize((448, 448)),
+            transforms.Resize(512),
+            transforms.CenterCrop(512),
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]),
@@ -202,7 +210,7 @@ if __name__ == '__main__':
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
-            pin_memory=False
+            pin_memory=True
         )
         for x in ["train", "valid"]
     }
@@ -225,31 +233,38 @@ if __name__ == '__main__':
                     best_acc_from_file = acc_val
                     checkpoint_path = file
 
-    # 4. 모델 설정 및 로드
-    # model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
-    # model.classifier[1] = nn.Linear(model.last_channel, 2)
-    # model = model.to(device)
-
-    # 기존 MobileNet_V2 대신 ResNet50을 사용
-    model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
-    num_ftrs = model.fc.in_features
-    model.fc = nn.Linear(num_ftrs, 2)
+    # 4. 모델 설정 및 동적 로드
+    if model_name == "MobileNetV2":
+        model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
+        model.classifier[1] = nn.Linear(model.last_channel, 2)
+    elif model_name == "ResNet50":
+        model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+        num_ftrs = model.fc.in_features
+        model.fc = nn.Linear(num_ftrs, 2)
+    else:
+        raise ValueError(f"지원하지 않는 모델 이름입니다: {model_name}")
     model = model.to(device)
-
+    
     if checkpoint_path:
         model.load_state_dict(torch.load(str(checkpoint_path), weights_only=True))
         print(f"가중치 로드 성공: {checkpoint_path} (기존 기록 {best_acc_from_file:.2%}부터 시작)")
     else:
         print("기존 가중치 파일이 없습니다. 0.0%부터 학습을 시작합니다.")
 
-    # optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
+    # 5. 옵티마이저 동적 로드
+    if optimizer_name == "Adam":
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    elif optimizer_name == "SGD":
+        momentum = config.get("MOMENTUM", 0.9)
+        optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay)
+    else:
+        raise ValueError(f"지원하지 않는 옵티마이저 이름입니다: {optimizer_name}")
 
     # 데이터 비율을 고려하여 졸음에 1.6배 가중치 부여
     weights = torch.tensor([2, 1.0], device=device) # [drowsy, normal] 순서
     criterion = nn.CrossEntropyLoss(weight=weights)
     
-    # 스케줄러: 3에포크 동안 정확도가 안 오르면 lr을 1/10로 감소
+    # 스케줄러: 3 Epoch 동안 정확도가 안 오르면 lr을 1/10로 감소
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
         mode='max',
