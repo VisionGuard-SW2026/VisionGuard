@@ -211,8 +211,8 @@ if __name__ == '__main__':
     # 2. 데이터셋 로드 설정
     data_transforms = {
         'train': transforms.Compose([
-            transforms.Resize(512),
-            transforms.CenterCrop(488),
+            transforms.Resize(224),
+            transforms.CenterCrop(224),
             # transforms.RandomHorizontalFlip(),
             # transforms.RandomRotation(15),       # 고개 꺾임 대비 (최대 15도)
             # transforms.GaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0)), # 초점 흐려짐 대비
@@ -221,8 +221,8 @@ if __name__ == '__main__':
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]),
         'valid': transforms.Compose([
-            transforms.Resize(512),
-            transforms.CenterCrop(488),
+            transforms.Resize(224),
+            transforms.CenterCrop(224),
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]),
