@@ -268,6 +268,10 @@ if __name__ == '__main__':
         model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
         num_ftrs = model.fc.in_features
         model.fc = nn.Linear(num_ftrs, 2)
+    elif model_name == "EfficientNetB0":
+        model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
+        num_ftrs = model.classifier[1].in_features
+        model.classifier[1] = nn.Linear(num_ftrs, 2)
     else:
         raise ValueError(f"지원하지 않는 모델 이름입니다: {model_name}")
     model = model.to(device)
