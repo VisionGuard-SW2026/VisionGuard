@@ -33,8 +33,9 @@ def train_model(
         model_prefix,
     ):
     best_model_wts = copy.deepcopy(model.state_dict())
-    # 불러온 파일의 정확도를 초기 최고점으로 설정
     best_acc = initial_best_acc 
+    # 표준 Early Stopping을 위해 최소 손실값을 추적합니다.
+    best_loss = float('inf') 
     early_stop_counter = 0
 
     print(f"\n학습 시작 기준 정확도: {best_acc:.2%}")
@@ -79,12 +80,13 @@ def train_model(
 
             # 검증 단계: 이전 최고 기록(best_acc)을 넘을 때만 저장
             if phase == 'valid':
-                # 스케줄러에게 현재 검증 정확도를 알려줍니다.
+                # 1. 스케줄러 업데이트 (정확도 기반)
                 if scheduler is not None:
                     current_lr = optimizer.param_groups[0]['lr']
                     print(f"⏱️ 스케줄러 점검: 검증 정확도 {epoch_acc:.2%} 기준으로 학습률을 확인합니다. (현재 lr={current_lr:.6f})")
                     scheduler.step(epoch_acc)
                 
+                # 2. 모델 저장 조건 (최고 정확도 경신 시 저장)
                 if epoch_acc > best_acc:
                     previous_best_acc = best_acc
                     # 기존 베스트 파일들 삭제
@@ -104,13 +106,19 @@ def train_model(
                     torch.save(best_model_wts, current_filename)
                     
                     print(f"🔥 신기록 달성! 기존 성적 {previous_best_acc:.2%}에서 신기록 성적 {best_acc:.2%}로 갱신하여 모델 저장 완료: {current_filename}")
-                    early_stop_counter = 0
+                    
+                # 3. 표준 Early Stopping 조건 (Validation Loss 기반)
+                # 정확도는 오르지 않아도 Loss가 낮아지고 있다면 모델은 계속 학습 중입니다.
+                if epoch_loss < best_loss:
+                    best_loss = epoch_loss
+                    early_stop_counter = 0 # 손실이 개선되면 카운터 초기화
+                    print(f"✅ 검증 손실 개선됨 ({epoch_loss:.4f}). Early Stopping 카운터 초기화.")
                 else:
-                    early_stop_counter += 1
-                    print(f"현재 성적({epoch_acc:.2%})이 기존 최고 성적({best_acc:.2%})에 미치지 못해 저장하지 않았습니다.")
+                    early_stop_counter += 1 # 손실 개선 실패 시 카운트 증가
+                    print(f"⚠️ 검증 손실 개선 실패. Early Stopping 카운터: {early_stop_counter}/{patience}")
 
         if early_stop_counter >= patience:
-            print(f"\n성능 개선 없음 ({patience} epochs). 조기 종료!")
+            print(f"\n🛑 조기 종료: 검증 손실이 {patience} 에포크 동안 개선되지 않았습니다.")
             break
 
     return model

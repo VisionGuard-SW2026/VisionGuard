@@ -4,7 +4,7 @@ DEFAULT_CONFIG = {
     "MOMENTUM": 0.9,                # SGD 전용
     "WEIGHT_DECAY": 1e-4,           # 가중치 감쇠 (L2 규제)
     "BATCH_SIZE": 32,
-    "NUM_WORKERS": 6,
+    "NUM_WORKERS": 2,
     "NUM_EPOCHS": 200,
     "LEARNING_RATE": 0.0001,
     "EARLY_STOP_PATIENCE": 5,
