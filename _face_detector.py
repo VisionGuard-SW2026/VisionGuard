@@ -42,7 +42,8 @@ def crop_features_v2(image_path, output_size=(224, 224)):
     
     # RGB 변환 및 MediaPipe 이미지 객체 생성 (더 안정적인 방식)
     rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    rgb_image = np.ascontiguousarray(rgb_image)
+    # [핵심] Windows free 에러 방지: 메모리를 한 덩어리로 정렬하고 강제 복사
+    rgb_image = np.ascontiguousarray(rgb_image.copy())
 
     try:
         mp_image = mp.Image.create_from_numpy(rgb_image)
@@ -99,3 +100,16 @@ def crop_features_v2(image_path, output_size=(224, 224)):
     
     if crop_img.size == 0: return None
     return cv2.resize(crop_img, output_size)
+
+def safe_save_img(save_path, img):
+    """한글 경로를 포함한 환경에서도 안전하게 이미지를 저장합니다."""
+    try:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        extension = os.path.splitext(save_path)[1]
+        result, encoded_img = cv2.imencode(extension, img)
+        if result:
+            encoded_img.tofile(str(save_path))
+            return True
+    except Exception as e:
+        print(f"❌ 저장 실패: {save_path}, 에러: {e}")
+    return False
