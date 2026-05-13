@@ -4,11 +4,11 @@ from mediapipe.tasks.python import vision
 import cv2
 import numpy as np
 
-# 전역 변수로 landmarker를 설정하여 모델을 한 번만 로드합니다.
+# 전역 변수로 landmarker를 설정하여 모델을 한 번만 로드
 _LANDMARKER = None
 
 def get_landmarker(model_path='face_landmarker.task'):
-    """모델을 메모리에 한 번만 로드하여 재사용합니다."""
+    """모델을 메모리에 한 번만 로드하여 재사용"""
     global _LANDMARKER
     if _LANDMARKER is None:
         base_options = python.BaseOptions(model_asset_path=model_path)
@@ -22,7 +22,7 @@ def get_landmarker(model_path='face_landmarker.task'):
 
 def crop_features_v2(image_path, output_size=(224, 224)):
     """
-    MediaPipe Tasks API를 사용하여 눈과 입 영역을 정밀 크롭합니다.
+    MediaPipe Tasks API를 사용하여 눈과 입 영역을 정밀 크롭
     """
     image = cv2.imread(str(image_path))
     if image is None: return None
@@ -47,17 +47,33 @@ def crop_features_v2(image_path, output_size=(224, 224)):
     x_coords = [int(landmarks[i].x * w) for i in COMBINED_INDICES]
     y_coords = [int(landmarks[i].y * h) for i in COMBINED_INDICES]
     
-    # 바운딩 박스 계산 및 여백 부여
-    xmin, xmax, ymin, ymax = min(x_coords), max(x_coords), min(y_coords), max(y_coords)
+    # 1. 최소/최대 좌표 계산
+    xmin, xmax = min(x_coords), max(x_coords)
+    ymin, ymax = min(y_coords), max(y_coords)
+    
+    # 2. 정사각형 영역 및 여백 설정 (1.4배)
     width, height = xmax - xmin, ymax - ymin
     side_length = int(max(width, height) * 1.4) # 여백 포함
     
+    # 3. 중심점 기준 좌표 계산
     center_x, center_y = (xmin + xmax) // 2, (ymin + ymax) // 2
     
-    final_xmin = max(0, center_x - side_length // 2)
-    final_ymin = max(0, center_y - side_length // 2)
+    start_x = center_x - side_length // 2
+    start_y = center_y - side_length // 2
     
-    crop_img = image[final_ymin:final_ymin+side_length, final_xmin:final_xmin+side_length]
+    # 4. 이미지 경계를 벗어나지 않도록 보정 (중요!)
+    final_xmin = max(0, start_x)
+    final_ymin = max(0, start_y)
+    final_xmax = min(w, final_xmin + side_length)
+    final_ymax = min(h, final_ymin + side_length)
+    
+    # 만약 오른쪽/아래가 잘린다면 왼쪽/위쪽을 더 확보해서 정사각형 유지
+    if final_xmax - final_xmin < side_length:
+        final_xmin = max(0, final_xmax - side_length)
+    if final_ymax - final_ymin < side_length:
+        final_ymin = max(0, final_ymax - side_length)
+
+    crop_img = image[final_ymin:final_ymax, final_xmin:final_xmax]
     
     if crop_img.size == 0: return None
     return cv2.resize(crop_img, output_size)
