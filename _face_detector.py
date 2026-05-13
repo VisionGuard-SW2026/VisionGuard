@@ -3,14 +3,22 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 import cv2
 import numpy as np
+import os
 
 # 전역 변수로 landmarker를 설정하여 모델을 한 번만 로드
 _LANDMARKER = None
 
-def get_landmarker(model_path='face_landmarker.task'):
-    """모델을 메모리에 한 번만 로드하여 재사용"""
+def get_landmarker():
     global _LANDMARKER
     if _LANDMARKER is None:
+        # 현재 파일(_face_detector.py)과 같은 위치에 있는 .task 파일의 절대 경로를 계산합니다.
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        model_path = os.path.join(current_dir, 'face_landmarker.task')
+        
+        if not os.path.exists(model_path):
+            print(f"❌ 에러: {model_path} 파일을 찾을 수 없습니다!")
+            return None
+            
         base_options = python.BaseOptions(model_asset_path=model_path)
         options = vision.FaceLandmarkerOptions(
             base_options=base_options,
@@ -21,24 +29,38 @@ def get_landmarker(model_path='face_landmarker.task'):
     return _LANDMARKER
 
 def crop_features_v2(image_path, output_size=(224, 224)):
-    """
-    MediaPipe Tasks API를 사용하여 눈과 입 영역을 정밀 크롭
-    """
-    image = cv2.imread(str(image_path))
+    # 윈도우 한글 경로 대응: cv2.imread 대신 np.fromfile 사용
+    try:
+        img_array = np.fromfile(str(image_path), np.uint8)
+        image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+    except Exception as e:
+        print(f"❌ 이미지 로드 실패: {image_path}, 에러: {e}")
+        return None
+
     if image is None: return None
     h, w, _ = image.shape
     
-    # RGB 변환 및 MediaPipe 이미지 객체 생성
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    # RGB 변환 및 MediaPipe 이미지 객체 생성 (더 안정적인 방식)
+    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    rgb_image = np.ascontiguousarray(rgb_image)
+
+    try:
+        mp_image = mp.Image.create_from_numpy(rgb_image)
+    except AttributeError:
+        # 버전 차이로 위 메서드가 없을 경우를 대비한 Fallback
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
 
     # 로드된 모델 사용
     landmarker = get_landmarker()
+    if landmarker is None: return None
+    
     detection_result = landmarker.detect(mp_image)
     
     if not detection_result.face_landmarks:
+        # 얼굴을 못 찾으면 스킵 (이게 너무 많으면 문제)
         return None
 
-    # 특징점 좌표 수집 (눈 + 입)
+    # 눈(EYE) + 입(MOUTH) 인덱스
     EYE_INDICES = [33, 160, 158, 133, 153, 144, 362, 385, 387, 263, 373, 380]
     MOUTH_INDICES = [61, 291, 13, 14, 81, 311, 178, 402]
     COMBINED_INDICES = EYE_INDICES + MOUTH_INDICES
