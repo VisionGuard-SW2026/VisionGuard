@@ -175,7 +175,7 @@ if __name__ == '__main__':
             ".env 또는 실행 환경에 값을 넣어주세요. "
         )
     vg_dataset_rel = (
-        os.getenv("VG_DATASET_REL", r"데이터 전처리 파일\dataset_final_v2")
+        os.getenv("VG_DATASET_REL", r"dataset_eyes_v1")
         .strip()
         .strip('"')
         .strip("'")
@@ -262,7 +262,7 @@ if __name__ == '__main__':
                     checkpoint_path = file
 
     # 4. 모델 설정 및 동적 로드
-    model = get_model().to(device)
+    model = get_model(model_name).to(device)
     
     if checkpoint_path:
         model.load_state_dict(torch.load(str(checkpoint_path), weights_only=True))

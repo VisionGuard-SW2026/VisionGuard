@@ -11,7 +11,7 @@ load_dotenv()
 
 # 경로 설정
 root_str = os.getenv("VG_DATA_ROOT", "").strip().strip('"').strip("'")
-SOURCE_DIR = Path(root_str) / "데이터 전처리 파일" / "dataset_final_v2"
+SOURCE_DIR = Path(root_str) / "dataset_final_v2"
 TARGET_DIR = Path("C:/VG/dataset_eyes_v1") # 가공된 데이터 저장소 고정
 
 def process_worker(task):
