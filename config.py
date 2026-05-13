@@ -7,7 +7,11 @@ DEFAULT_CONFIG = {
     "NUM_WORKERS": 2,
     "NUM_EPOCHS": 200,
     "LEARNING_RATE": 0.0001,
-    "EARLY_STOP_PATIENCE": 5,
+    "EARLY_STOP_PATIENCE": 10,
+    "EAR_DATA_PATH": "ears.npy",
+    "LABEL_DATA_PATH": "labels.npy",
+    "ENSEMBLE_WEIGHT_VISION": 0.75, # 비전 모델 비중
+    "ENSEMBLE_WEIGHT_EAR": 0.25,    # EAR 수치 비중
     "SCHEDULER_FACTOR": 0.1,
     "SCHEDULER_PATIENCE": 3,
     "MODEL_PREFIX": "Best_VisionGuard_v2",
