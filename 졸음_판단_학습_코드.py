@@ -14,6 +14,7 @@ from PIL import ImageFile
 from config import DEFAULT_CONFIG
 from dotenv import load_dotenv
 from model_net import get_model
+from safetensors.torch import save_file
 
 # 1. 환경 설정 및 안정성 확보
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -104,16 +105,18 @@ def train_model(
                     best_model_wts = copy.deepcopy(model.state_dict())
                     
                     # 새 파일명 저장
-                    current_filename = f'{model_prefix}({best_acc:.2%}).pth'
-                    checkpoint = {
-                        'epoch': epoch,
-                        'model_state_dict': best_model_wts,
-                        'optimizer_state_dict': optimizer.state_dict(),
-                        'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
-                        'best_acc': best_acc.item() if torch.is_tensor(best_acc) else best_acc,
-                        'best_loss': best_loss
+                    current_filename = f'{model_prefix}({best_acc:.2%}).safetensors'
+                    
+                    # safetensors는 평평한(flat) 텐서 딕셔너리를 선호합니다.
+                    # 메타데이터(에포크, 정확도 등)는 문자열 형태로 저장해야 합니다.
+                    metadata = {
+                        "epoch": str(epoch),
+                        "best_acc": str(best_acc.item() if torch.is_tensor(best_acc) else best_acc),
+                        "model_name": model_name
                     }
-                    torch.save(checkpoint, current_filename)
+                    
+                    # 가중치 데이터를 safetensors 형식으로 저장
+                    save_file(best_model_wts, current_filename, metadata=metadata)
                     
                     print(f"🔥 신기록 달성! 기존 성적 {previous_best_acc:.2%}에서 신기록 성적 {best_acc:.2%}로 갱신하여 모델 저장 완료: {current_filename}")
                     
@@ -264,7 +267,7 @@ if __name__ == '__main__':
 
     # 현재 폴더 내 파일 중 가장 높은 정확도를 가진 파일 찾기
     for file in model_out_dir.iterdir():
-        if file.is_file() and file.name.startswith(prefix) and file.suffix == ".pth":
+        if file.is_file() and file.name.startswith(prefix) and file.suffix in [".safetensors", ".pth"]:
             # 정규표현식으로 (88.77%) 형태에서 숫자 추출
             match = re.search(r"\((\d+\.?\d*)%\)", file.name)
             if match:
@@ -303,8 +306,12 @@ if __name__ == '__main__':
             if scheduler and ckpt.get('scheduler_state_dict'):
                 scheduler.load_state_dict(ckpt['scheduler_state_dict'])
             best_acc_from_file = ckpt.get('best_acc', best_acc_from_file)
+            
+            # 저장된 에포크가 4라면, 다음 시작은 5여야함
             start_epoch = ckpt.get('epoch', -1) + 1 # 시작 에포크 갱신
-            print(f"✅ 체크포인트 로드 완료: {checkpoint_path} (에포크 {ckpt['epoch']+1}부터 재개)")
+            
+            # 사용자에게는 1을 더한 '차수' 개념으로 보여주는 것이 직관적
+            print(f"✅ 체크포인트 로드 완료: {checkpoint_path} (에포크 {start_epoch}부터 재개)")
         else:
             model.load_state_dict(ckpt)
             print(f"⚠️ 단순 가중치 로드 완료: {checkpoint_path}")
