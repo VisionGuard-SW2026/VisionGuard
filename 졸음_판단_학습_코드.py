@@ -32,6 +32,7 @@ def train_model(
         initial_best_acc,
         scheduler,
         model_prefix,
+        start_epoch=0,
     ):
     best_model_wts = copy.deepcopy(model.state_dict())
     best_acc = initial_best_acc 
@@ -41,7 +42,7 @@ def train_model(
 
     print(f"\n학습 시작 기준 정확도: {best_acc:.2%}")
 
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         print(f'\nEpoch {epoch+1}/{num_epochs}')
         print('-' * 12)
 
@@ -274,7 +275,7 @@ if __name__ == '__main__':
 
     # 4. 모델 설정 및 동적 로드
     model = get_model(model_name).to(device)
-    
+    start_epoch = 0 # 시작 에포크 초기화
     # 5. 옵티마이저 동적 로드
     if optimizer_name == "Adam":
         optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
@@ -302,6 +303,7 @@ if __name__ == '__main__':
             if scheduler and ckpt.get('scheduler_state_dict'):
                 scheduler.load_state_dict(ckpt['scheduler_state_dict'])
             best_acc_from_file = ckpt.get('best_acc', best_acc_from_file)
+            start_epoch = ckpt.get('epoch', -1) + 1 # 시작 에포크 갱신
             print(f"✅ 체크포인트 로드 완료: {checkpoint_path} (에포크 {ckpt['epoch']+1}부터 재개)")
         else:
             model.load_state_dict(ckpt)
@@ -322,4 +324,5 @@ if __name__ == '__main__':
         initial_best_acc=best_acc_from_file,
         scheduler=scheduler,
         model_prefix=model_prefix,
+        start_epoch=start_epoch, # 추출한 시작 에포크 전달
     )
