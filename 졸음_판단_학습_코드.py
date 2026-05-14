@@ -104,7 +104,15 @@ def train_model(
                     
                     # 새 파일명 저장
                     current_filename = f'{model_prefix}({best_acc:.2%}).pth'
-                    torch.save(best_model_wts, current_filename)
+                    checkpoint = {
+                        'epoch': epoch,
+                        'model_state_dict': best_model_wts,
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+                        'best_acc': best_acc.item() if torch.is_tensor(best_acc) else best_acc,
+                        'best_loss': best_loss
+                    }
+                    torch.save(checkpoint, current_filename)
                     
                     print(f"🔥 신기록 달성! 기존 성적 {previous_best_acc:.2%}에서 신기록 성적 {best_acc:.2%}로 갱신하여 모델 저장 완료: {current_filename}")
                     
@@ -267,12 +275,6 @@ if __name__ == '__main__':
     # 4. 모델 설정 및 동적 로드
     model = get_model(model_name).to(device)
     
-    if checkpoint_path:
-        model.load_state_dict(torch.load(str(checkpoint_path), weights_only=True))
-        print(f"가중치 로드 성공: {checkpoint_path} (기존 기록 {best_acc_from_file:.2%}부터 시작)")
-    else:
-        print("기존 가중치 파일이 없습니다. 0.0%부터 학습을 시작합니다.")
-
     # 5. 옵티마이저 동적 로드
     if optimizer_name == "Adam":
         optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
@@ -282,10 +284,6 @@ if __name__ == '__main__':
     else:
         raise ValueError(f"지원하지 않는 옵티마이저 이름입니다: {optimizer_name}")
 
-    # 데이터 비율을 고려하여 졸음에 1.6배 가중치 부여
-    weights = torch.tensor([2, 1.0], device=device) # [drowsy, normal] 순서
-    criterion = nn.CrossEntropyLoss(weight=weights)
-    
     # 스케줄러: 3 Epoch 동안 정확도가 안 오르면 lr을 1/10로 감소
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
@@ -294,7 +292,26 @@ if __name__ == '__main__':
         patience=scheduler_patience,
     )
 
-    # 5. 학습 시작 (추출한 정확도를 인자로 전달)
+    # 5. 정의된 객체들에 체크포인트 값 주입
+    if checkpoint_path:
+        ckpt = torch.load(str(checkpoint_path), map_location=device)
+        # 체크포인트 형식인지, 단순 가중치 파일인지 판별하여 로드
+        if isinstance(ckpt, dict) and 'model_state_dict' in ckpt:
+            model.load_state_dict(ckpt['model_state_dict'])
+            optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+            if scheduler and ckpt.get('scheduler_state_dict'):
+                scheduler.load_state_dict(ckpt['scheduler_state_dict'])
+            best_acc_from_file = ckpt.get('best_acc', best_acc_from_file)
+            print(f"✅ 체크포인트 로드 완료: {checkpoint_path} (에포크 {ckpt['epoch']+1}부터 재개)")
+        else:
+            model.load_state_dict(ckpt)
+            print(f"⚠️ 단순 가중치 로드 완료: {checkpoint_path}")
+
+    # 데이터 비율을 고려하여 졸음에 1.6배 가중치 부여
+    weights = torch.tensor([2, 1.0], device=device) # [drowsy, normal] 순서
+    criterion = nn.CrossEntropyLoss(weight=weights)
+
+    # 6. 학습 시작 (추출한 정확도를 인자로 전달)
     model_ft = train_model(
         model, criterion, optimizer,
         num_epochs=num_epochs,
