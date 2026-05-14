@@ -62,7 +62,7 @@ def preprocess_all_data():
     # 멀티프로세싱 실행 (병렬 코어 활용)
     # max_workers는 코어 수에 맞춰 조정하세요 (6~8개 권장)
     with ProcessPoolExecutor(max_workers=6) as executor:
-        list(tqdm(executor.map(process_worker, all_tasks), total=len(all_tasks), desc="🔥 병렬 전처리 진행 중"))
+        list(tqdm(executor.map(process_worker, all_tasks), total=len(all_tasks), desc="🔥 병렬 전처리 진행 중", dynamic_ncols=True))
 
 if __name__ == "__main__":
     preprocess_all_data()

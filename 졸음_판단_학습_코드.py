@@ -54,7 +54,7 @@ def train_model(
             running_loss = 0.0
             running_corrects = 0
 
-            pbar = tqdm(dataloaders[phase], desc=f'{phase} phase')
+            pbar = tqdm(dataloaders[phase], desc=f'{phase} phase', dynamic_ncols=True)
             for inputs, labels in pbar:
                 inputs = inputs.to(device)
                 labels = labels.to(device)
