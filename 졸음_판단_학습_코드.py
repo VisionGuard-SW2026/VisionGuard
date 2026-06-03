@@ -190,7 +190,7 @@ if __name__ == '__main__':
             ".env 또는 실행 환경에 값을 넣어주세요. "
         )
     vg_dataset_rel = (
-        os.getenv("VG_DATASET_REL", r"dataset_eyes_v1")
+        os.getenv("VG_DATASET_REL", r"dataset")
         .strip()
         .strip('"')
         .strip("'")
@@ -199,6 +199,7 @@ if __name__ == '__main__':
 
     train_dir = data_dir / "train"
     valid_dir = data_dir / "valid"
+    test_dir = data_dir / "test"
 
     if not train_dir.exists() or not valid_dir.exists():
         raise ValueError(
@@ -245,19 +246,22 @@ if __name__ == '__main__':
     }
 
     image_datasets = {
-        x: datasets.ImageFolder(str(data_dir / x), data_transforms[x]) for x in ["train", "valid"]
+        x: datasets.ImageFolder(
+            str(data_dir / x),
+            data_transforms['train'] if x == 'train' else data_transforms['valid']
+        ) for x in ["train", "valid", "test"]
     }
     dataloaders = {
         x: DataLoader(
             image_datasets[x],
             batch_size=batch_size,
-            shuffle=True,
+            shuffle=(x == "train"),
             num_workers=num_workers,
             pin_memory=True
         )
-        for x in ["train", "valid"]
+        for x in ["train", "valid", "test"]
     }
-    dataset_sizes = {x: len(image_datasets[x]) for x in ["train", "valid"]}
+    dataset_sizes = {x: len(image_datasets[x]) for x in ["train", "valid", "test"]}
 
     # 3. 가중치 탐색 및 최고 정확도 추출 로직
     prefix = model_prefix
@@ -317,7 +321,7 @@ if __name__ == '__main__':
             print(f"⚠️ 단순 가중치 로드 완료: {checkpoint_path}")
 
     # 데이터 비율을 고려하여 졸음에 1.6배 가중치 부여
-    weights = torch.tensor([2, 1.0], device=device) # [drowsy, normal] 순서
+    weights = torch.tensor([17.0, 1.0], device=device) # [drowsy, normal] 순서
     criterion = nn.CrossEntropyLoss(weight=weights)
 
     # 6. 학습 시작 (추출한 정확도를 인자로 전달)

@@ -6,11 +6,16 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 load_dotenv()
-root_str = os.getenv("VG_DATA_ROOT", "")
-if not root_str:
-    raise ValueError("VG_DATA_ROOT가 .env에 없습니다.")
-VG_DATA_ROOT = Path(root_str).expanduser()
-data_dir = VG_DATA_ROOT / "데이터 전처리 파일" / "dataset_final_v2"
+
+vg_data_root_raw = os.getenv("VG_DATA_ROOT", "").strip().strip('"').strip("'")
+if not vg_data_root_raw:
+    raise ValueError(
+        "필수 환경변수 'VG_DATA_ROOT'가 설정되지 않았습니다. "
+        ".env 파일의 설정을 확인해주세요."
+    )
+
+vg_dataset_rel = os.getenv("VG_DATASET_REL", r"dataset").strip().strip('"').strip("'")
+data_dir = Path(vg_data_root_raw) / vg_dataset_rel
 
 print("불량 이미지 검사 시작...")
 for root, dirs, files in os.walk(data_dir):
