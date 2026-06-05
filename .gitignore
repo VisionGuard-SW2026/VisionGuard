@@ -12,3 +12,4 @@ venv/
 *.task
 *.safetensors
 Weight/
+real_test/
