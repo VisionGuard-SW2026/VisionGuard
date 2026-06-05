@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 import os
 import re
-import sys  # 프로그램 즉시 종료를 위해 추가
+import sys  
 from dotenv import load_dotenv
 from config import DEFAULT_CONFIG
 from model_net import get_model
@@ -30,17 +30,16 @@ def evaluate_test_set():
     model_out_dir = Path(vg_data_root_raw) / "Weight"
     model_out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 3. 대상 모델 프리픽스 설정 및 후보군 수집
-    model_name = config["MODEL_NAME"]
-    model_prefix = f"{model_name}_{config['MODEL_PREFIX']}"
-    
+    # 3. 대상 모델 후보군 수집 (아키텍처/파일명 필터링 전면 해제)
     valid_models = []
 
-    # Weight 폴더 내 조건에 맞는 모든 모델 파일 수집
+    # Weight 폴더 내의 모든 .safetensors 및 .pth 파일을 무조건 수집
     for file in model_out_dir.iterdir():
-        if file.is_file() and file.name.startswith(model_prefix) and file.suffix in [".safetensors", ".pth"]:
+        if file.is_file() and file.suffix in [".safetensors", ".pth"]:
+            # 파일명에서 정확도 양식 (XX.XX%) 추출 시도
             match = re.search(r"\((\d+\.?\d*)%\)", file.name)
             recorded_acc = f"{float(match.group(1)):.2%}" if match else "기록 없음"
+            
             valid_models.append({
                 "path": file,
                 "name": file.name,
@@ -49,7 +48,7 @@ def evaluate_test_set():
             })
 
     if not valid_models:
-        print(f"🚨 [에러] '{model_out_dir}' 폴더 내에서 일치하는 가중치 파일을 찾을 수 없습니다.")
+        print(f"🚨 [에러] '{model_out_dir}' 폴더 내에서 .safetensors 또는 .pth 파일을 찾을 수 없습니다.")
         return
 
     print(f"📂 가중치 저장소 경로: {model_out_dir}")
@@ -85,7 +84,7 @@ def evaluate_test_set():
         print(f"🚨 [데이터로더 에러] 데이터셋 로드 실패: {e}")
         return
 
-    # 5. 다중 모델 검증 루프 가동 (ay 및 q 제어)
+    # 5. 다중 모델 검증 루프 가동
     skip_prompt = False  
     total_samples = len(test_dataset)
 
@@ -98,7 +97,6 @@ def evaluate_test_set():
         if not skip_prompt:
             user_input = input("▶️ 이 모델을 검증하시겠습니까? (Y: 진행 / N: 패스 / ay: 전체 자동진행 / q: 종료): ").strip().lower()
             
-            # 💡 q 입력 시 시스템 즉시 종료 구조 빌드
             if user_input == 'q':
                 print("\n🛑 사용자의 요청으로 모델 검증 프로그램을 강제 종료합니다.")
                 sys.exit(0)
@@ -111,9 +109,17 @@ def evaluate_test_set():
             elif user_input != 'y' and user_input != '':
                 print("⚠️ 잘못된 입력입니다. 기본값인 [Y]로 간주하고 진행합니다.")
 
-        # 6. 가중치 파일 확장자별 로드 엔진 동적 분기 및 주입
-        model = get_model(model_name).to(device)
+        # 6. 파일명에서 모델 종류(아키텍처)를 동적으로 추론하여 백엔드 빌드
+        # 파일명이 'MobileNetV2_...'로 시작하면 MobileNetV2 모델 구조를 동적으로 생성합니다.
+        current_model_name = config["MODEL_NAME"] # 기본값 복사
+        for arch in ["EfficientNetB0", "MobileNetV2", "ResNet50"]:
+            if model_info['name'].startswith(arch):
+                current_model_name = arch
+                break
+
         try:
+            model = get_model(current_model_name).to(device)
+            
             if model_info['suffix'] == ".safetensors":
                 from safetensors.torch import load_file
                 weights = load_file(str(model_info['path']))
@@ -123,8 +129,10 @@ def evaluate_test_set():
             
             model.load_state_dict(weights)
             model.eval()
+            print(f"🤖 모델 구조 매핑 완료: {current_model_name}")
         except Exception as e:
-            print(f"🚨 [가중치 로드 에러] '{model_info['name']}' 파일 디코딩 실패: {e}")
+            print(f"🚨 [모델 로드 에러] '{model_info['name']}' 가중치 주입 실패: {e}")
+            print("   - model_net.py에 해당 모델 구조가 정의되어 있는지 확인하세요.")
             continue
 
         # 7. 수능 평가 추론 연산 수행
