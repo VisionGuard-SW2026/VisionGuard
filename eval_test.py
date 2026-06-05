@@ -4,13 +4,16 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from pathlib import Path
 import os
+import re
+import sys  # 프로그램 즉시 종료를 위해 추가
 from dotenv import load_dotenv
 from config import DEFAULT_CONFIG
 from model_net import get_model
+from tqdm import tqdm
 
 def evaluate_test_set():
     print("=" * 60)
-    print("🎯 Vision Guard 최종 실전 데이터셋(Test Set) 평가 가동")
+    print("🎯 Vision Guard 다중 모델 실전 데이터셋(Test Set) 통합 검증 가동")
     print("=" * 60)
 
     # 1. 환경 변수 및 설정 로드
@@ -18,36 +21,42 @@ def evaluate_test_set():
     config = DEFAULT_CONFIG
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 2. 파일에서 가중치 탐색 및 자동 매칭
+    # 2. VG_DATA_ROOT 환경 변수 기반 Weight 폴더 경로 계산
+    vg_data_root_raw = os.getenv("VG_DATA_ROOT", "").strip().strip('"').strip("'")
+    if not vg_data_root_raw:
+        print("🚨 [환경변수 에러] 필수 환경변수 'VG_DATA_ROOT'가 설정되지 않았습니다.")
+        return
+        
+    model_out_dir = Path(vg_data_root_raw) / "Weight"
+    model_out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 3. 대상 모델 프리픽스 설정 및 후보군 수집
     model_name = config["MODEL_NAME"]
     model_prefix = f"{model_name}_{config['MODEL_PREFIX']}"
     
-    checkpoint_path = None
-    best_acc_from_file = "0.00%"
-    model_out_dir = Path(".")
+    valid_models = []
 
-    # 현재 폴더에서 가장 높은 성적의 .safetensors 가중치 파일 자동 탐색
-    import re
-    max_acc = -1.0
+    # Weight 폴더 내 조건에 맞는 모든 모델 파일 수집
     for file in model_out_dir.iterdir():
-        if file.is_file() and file.name.startswith(model_prefix) and file.suffix == ".safetensors":
+        if file.is_file() and file.name.startswith(model_prefix) and file.suffix in [".safetensors", ".pth"]:
             match = re.search(r"\((\d+\.?\d*)%\)", file.name)
-            if match:
-                acc_val = float(match.group(1))
-                if acc_val > max_acc:
-                    max_acc = acc_val
-                    checkpoint_path = file
-                    best_acc_from_file = f"{acc_val:.2%}"
+            recorded_acc = f"{float(match.group(1)):.2%}" if match else "기록 없음"
+            valid_models.append({
+                "path": file,
+                "name": file.name,
+                "suffix": file.suffix,
+                "recorded_acc": recorded_acc
+            })
 
-    if not checkpoint_path:
-        print("🚨 [에러] 폴더 내에서 .safetensors 가중치 파일을 찾을 수 없습니다.")
-        print("   - 파일명이 'EfficientNetB0_Best_VisionGuard_v2(99.45%).safetensors' 구조인지 확인하세요.")
+    if not valid_models:
+        print(f"🚨 [에러] '{model_out_dir}' 폴더 내에서 일치하는 가중치 파일을 찾을 수 없습니다.")
         return
 
-    print(f"📦 로드할 최종 가중치 파일: {checkpoint_path.name} (기록된 성적: {best_acc_from_file})")
+    print(f"📂 가중치 저장소 경로: {model_out_dir}")
+    print(f"✅ 총 {len(valid_models)}개의 모델 후보군을 발견했습니다.")
+    print("-" * 60)
 
-    # 3. 환경 변수 기반 데이터셋 경로 계산
-    vg_data_root_raw = os.getenv("VG_DATA_ROOT", "").strip().strip('"').strip("'")
+    # 4. 환경 변수 기반 데이터셋 경로 계산 및 데이터로더 빌드
     vg_dataset_rel = os.getenv("VG_DATASET_REL", r"dataset").strip().strip('"').strip("'")
     data_dir = Path(vg_data_root_raw) / vg_dataset_rel
     test_dir = data_dir / "test"
@@ -56,7 +65,6 @@ def evaluate_test_set():
         print(f"🚨 [경로 에러] Test 데이터셋 폴더를 찾을 수 없습니다: {test_dir}")
         return
 
-    # 4. 수능 시험(Test Set) 전용 정규화 데이터로더 선언
     test_transform = transforms.Compose([
         transforms.Resize(224),
         transforms.CenterCrop(224),
@@ -69,7 +77,7 @@ def evaluate_test_set():
         test_loader = DataLoader(
             test_dataset, 
             batch_size=config["BATCH_SIZE"], 
-            shuffle=False,  # 🧠 순수 평가이므로 셔플 원천 차단
+            shuffle=False, 
             num_workers=config["NUM_WORKERS"], 
             pin_memory=True
         )
@@ -77,48 +85,70 @@ def evaluate_test_set():
         print(f"🚨 [데이터로더 에러] 데이터셋 로드 실패: {e}")
         return
 
-    # 5. 모델 빌드 및 가중치 주입 (safetensors 가속 로드)
-    from safetensors.torch import load_file
-    model = get_model(model_name).to(device)
-    
-    try:
-        weights = load_file(str(checkpoint_path))
-        model.load_state_dict(weights)
-        print("✅ 가중치 메모리 매핑 완료. 최종 인퍼런스 모드 가동.")
-    except Exception as e:
-        print(f"🚨 [가중치 로드 에러] .safetensors 파일 디코딩 실패: {e}")
-        return
-
-    # 6. 최종 수능 평가 루프 돌리기 (추론 연산)
-    model.eval()
-    running_corrects = 0
+    # 5. 다중 모델 검증 루프 가동 (ay 및 q 제어)
+    skip_prompt = False  
     total_samples = len(test_dataset)
 
-    print(f"\n🔍 총 {total_samples}개의 오염되지 않은 순수 Test 이미지 평가 진행 중...")
-    
-    with torch.no_grad(): # 역전파 경사하강 연산 정지하여 RTX 4070 VRAM 최적화
-        for inputs, labels in tqdm(test_loader, desc="최종 채점 중", dynamic_ncols=True):
-            inputs = inputs.to(device)
-            labels = labels.to(device)
+    for idx, model_info in enumerate(valid_models, 1):
+        print(f"\n[모델 {idx}/{len(valid_models)}] 후보 검증 준비")
+        print(f"📄 파일명: {model_info['name']}")
+        print(f"📊 파일 기록 성적: {model_info['recorded_acc']}")
 
-            outputs = model(inputs)
-            _, preds = torch.max(outputs, 1)
+        # 대화형 프롬프트 제어 구역
+        if not skip_prompt:
+            user_input = input("▶️ 이 모델을 검증하시겠습니까? (Y: 진행 / N: 패스 / ay: 전체 자동진행 / q: 종료): ").strip().lower()
+            
+            # 💡 q 입력 시 시스템 즉시 종료 구조 빌드
+            if user_input == 'q':
+                print("\n🛑 사용자의 요청으로 모델 검증 프로그램을 강제 종료합니다.")
+                sys.exit(0)
+            elif user_input == 'n':
+                print("⏭️ 해당 모델 검증을 패스하고 다음으로 넘어갑니다.")
+                continue
+            elif user_input == 'ay':
+                print("🚀 'All Yes'가 활성화되었습니다. 이후 모든 모델은 확인 없이 자동 검증을 진행합니다.")
+                skip_prompt = True
+            elif user_input != 'y' and user_input != '':
+                print("⚠️ 잘못된 입력입니다. 기본값인 [Y]로 간주하고 진행합니다.")
 
-            running_corrects += torch.sum(preds == labels.data)
+        # 6. 가중치 파일 확장자별 로드 엔진 동적 분기 및 주입
+        model = get_model(model_name).to(device)
+        try:
+            if model_info['suffix'] == ".safetensors":
+                from safetensors.torch import load_file
+                weights = load_file(str(model_info['path']))
+            else:
+                ckpt = torch.load(str(model_info['path']), map_location=device)
+                weights = ckpt['model_state_dict'] if isinstance(ckpt, dict) and 'model_state_dict' in ckpt else ckpt
+            
+            model.load_state_dict(weights)
+            model.eval()
+        except Exception as e:
+            print(f"🚨 [가중치 로드 에러] '{model_info['name']}' 파일 디코딩 실패: {e}")
+            continue
 
-    # 7. 최종 결과 레포팅
-    final_test_acc = (running_corrects.double() / total_samples).item()
-    print("\n" + "=" * 60)
-    print(f"📊 [최종 인수 테스트 채점 결과]")
-    print(f"   - 모의고사 성적 (Valid Accuracy) : {best_acc_from_file}")
-    print(f"   - 실제 수능 성적 (Test Accuracy)  : {final_test_acc:.2%}")
-    print("=" * 60)
-    
-    if final_test_acc >= 0.95:
-        print("✨ [결론] 일반화 성능 완벽 검증 완료. 실전 배포 가능 등급.")
-    else:
-        print("⚠️ [결론] 데이터 누수(Data Leakage) 징후 감지됨.")
-        print("   - 의심 원인: 무작위 프레임 셔플로 인해 Train 데이터의 특징이 시험 문제에 유출되었을 수 있음.")
+        # 7. 수능 평가 추론 연산 수행
+        running_corrects = 0
+        print(f"🔍 총 {total_samples}개의 격리된 순수 Test 이미지 평가 진행 중...")
+        
+        with torch.no_grad():
+            for inputs, labels in tqdm(test_loader, desc="채점 중", dynamic_ncols=True):
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+
+                outputs = model(inputs)
+                _, preds = torch.max(outputs, 1)
+                running_corrects += torch.sum(preds == labels.data)
+
+        # 8. 개별 모델 결과 리포팅
+        final_test_acc = (running_corrects.double() / total_samples).item()
+        print("-" * 60)
+        print(f"📊 [검증 완료 결과 - {model_info['name']}]")
+        print(f"   - 기존 기록 성적 (Valid Accuracy) : {model_info['recorded_acc']}")
+        print(f"   - 실전 채점 성적 (Test Accuracy)  : {final_test_acc:.2%}")
+        print("-" * 60)
+
+    print("\n🏁 모든 모델의 최종 인수 테스트 검증 절차가 종료되었습니다.")
 
 if __name__ == '__main__':
     evaluate_test_set()
