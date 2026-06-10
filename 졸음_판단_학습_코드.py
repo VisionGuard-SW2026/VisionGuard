@@ -14,11 +14,58 @@ from PIL import ImageFile
 from config import DEFAULT_CONFIG
 from dotenv import load_dotenv
 from model_net import get_model
+from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
 # 1. 환경 설정 및 안정성 확보
 warnings.filterwarnings("ignore", category=UserWarning)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+
+def _checkpoint_path(model_out_dir, model_prefix):
+    return model_out_dir / f"{model_prefix}_checkpoint_latest.pth"
+
+
+def save_training_checkpoint(
+    path,
+    epoch,
+    model,
+    optimizer,
+    scheduler,
+    best_acc,
+    best_loss,
+    early_stop_counter,
+    model_name,
+):
+    best_acc_val = best_acc.item() if torch.is_tensor(best_acc) else best_acc
+    ckpt = {
+        "epoch": epoch,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
+        "best_acc": float(best_acc_val),
+        "best_loss": float(best_loss),
+        "early_stop_counter": early_stop_counter,
+        "model_name": model_name,
+    }
+    torch.save(ckpt, str(path))
+
+
+def load_training_checkpoint(path, model, optimizer, scheduler, device):
+    ckpt = torch.load(str(path), map_location=device, weights_only=False)
+    if not isinstance(ckpt, dict) or "model_state_dict" not in ckpt:
+        raise ValueError(f"유효하지 않은 체크포인트 형식입니다: {path}")
+
+    model.load_state_dict(ckpt["model_state_dict"])
+    optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+    if scheduler and ckpt.get("scheduler_state_dict"):
+        scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+
+    start_epoch = ckpt.get("epoch", -1) + 1
+    best_acc = ckpt.get("best_acc", 0.0)
+    best_loss = ckpt.get("best_loss", float("inf"))
+    early_stop_counter = ckpt.get("early_stop_counter", 0)
+    return start_epoch, best_acc, best_loss, early_stop_counter
 
 
 def train_model(
@@ -36,14 +83,18 @@ def train_model(
         model_out_dir,
         model_name,
         start_epoch=0,
+        initial_best_loss=float("inf"),
+        initial_early_stop_counter=0,
     ):
     best_model_wts = copy.deepcopy(model.state_dict())
-    best_acc = initial_best_acc 
-    # 표준 Early Stopping을 위해 최소 손실값을 추적합니다.
-    best_loss = float('inf') 
-    early_stop_counter = 0
+    best_acc = initial_best_acc
+    best_loss = initial_best_loss
+    early_stop_counter = initial_early_stop_counter
+    resume_ckpt_path = _checkpoint_path(model_out_dir, model_prefix)
 
     print(f"\n학습 시작 기준 정확도: {best_acc:.2%}")
+    if start_epoch > 0:
+        print(f"이어서 학습: Epoch {start_epoch + 1}부터 (저장된 epoch={start_epoch - 1})")
 
     for epoch in range(start_epoch, num_epochs):
         print(f'\nEpoch {epoch+1}/{num_epochs}')
@@ -94,10 +145,15 @@ def train_model(
                 # 2. 모델 저장 조건 (최고 정확도 경신 시 저장)
                 if epoch_acc > best_acc:
                     previous_best_acc = best_acc
-                    # 기존 베스트 파일들 삭제
+                    # 배포용 베스트 safetensors만 교체 (재개용 checkpoint_latest.pth는 유지)
                     prefix = model_prefix
                     for file in model_out_dir.iterdir():
-                        if file.is_file() and file.name.startswith(prefix) and file.suffix in [".pth", ".safetensors"]:
+                        if (
+                            file.is_file()
+                            and file.name.startswith(prefix)
+                            and file.suffix == ".safetensors"
+                            and re.search(r"\(\d+\.?\d*%\)", file.name)
+                        ):
                             try:
                                 file.unlink()
                             except OSError:
@@ -131,6 +187,18 @@ def train_model(
                 else:
                     early_stop_counter += 1 # 손실 개선 실패 시 카운트 증가
                     print(f"⚠️ 검증 손실 개선 실패. Early Stopping 카운터: {early_stop_counter}/{patience}")
+
+                save_training_checkpoint(
+                    resume_ckpt_path,
+                    epoch,
+                    model,
+                    optimizer,
+                    scheduler,
+                    best_acc,
+                    best_loss,
+                    early_stop_counter,
+                    model_name,
+                )
 
         if early_stop_counter >= patience:
             print(f"\n🛑 조기 종료: 검증 손실이 {patience} 에포크 동안 개선되지 않았습니다.")
@@ -272,23 +340,25 @@ if __name__ == '__main__':
     print(f"📂 가중치 저장소 경로: {model_out_dir}")
 
     prefix = model_prefix
-    checkpoint_path = None
+    resume_ckpt_path = _checkpoint_path(model_out_dir, prefix)
+    best_weights_path = None
     best_acc_from_file = 0.0
+    best_loss_from_file = float("inf")
+    early_stop_counter_from_file = 0
 
-    # Weight 폴더 내 파일 중 가장 높은 정확도를 가진 파일 찾기
+    # Weight 폴더 내 배포용 베스트 safetensors 탐색 (체크포인트 없을 때 폴백)
     for file in model_out_dir.iterdir():
-        if file.is_file() and file.name.startswith(prefix) and file.suffix in [".safetensors", ".pth"]:
-            # 정규표현식으로 (88.77%) 형태에서 숫자 추출
+        if file.is_file() and file.name.startswith(prefix) and file.suffix == ".safetensors":
             match = re.search(r"\((\d+\.?\d*)%\)", file.name)
             if match:
                 acc_val = float(match.group(1)) / 100.0
                 if acc_val > best_acc_from_file:
                     best_acc_from_file = acc_val
-                    checkpoint_path = file
+                    best_weights_path = file
 
     # 4. 모델 설정 및 동적 로드
     model = get_model(model_name).to(device)
-    start_epoch = 0 # 시작 에포크 초기화
+    start_epoch = 0
     # 5. 옵티마이저 동적 로드
     if optimizer_name == "Adam":
         optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
@@ -306,30 +376,28 @@ if __name__ == '__main__':
         patience=scheduler_patience,
     )
 
-    # 5. 정의된 객체들에 체크포인트 값 주입
-    if checkpoint_path:
-        if checkpoint_path.suffix == ".safetensors":
-            weights = load_file(str(checkpoint_path))
-            model.load_state_dict(weights)
-            print(f"✅ safetensors 가중치 로드 완료: {checkpoint_path}")
-        else:
-            ckpt = torch.load(str(checkpoint_path), map_location=device)
-            # 체크포인트 형식인지, 단순 가중치 파일인지 판별하여 로드
-            if isinstance(ckpt, dict) and 'model_state_dict' in ckpt:
-                model.load_state_dict(ckpt['model_state_dict'])
-                optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-                if scheduler and ckpt.get('scheduler_state_dict'):
-                    scheduler.load_state_dict(ckpt['scheduler_state_dict'])
-                best_acc_from_file = ckpt.get('best_acc', best_acc_from_file)
-                
-                # 저장된 에포크가 4라면, 다음 시작은 5여야함
-                start_epoch = ckpt.get('epoch', -1) + 1 # 시작 에포크 갱신
-                
-                # 사용자에게는 1을 더한 '차수' 개념으로 보여주는 것이 직관적
-                print(f"✅ 체크포인트 로드 완료: {checkpoint_path} (에포크 {start_epoch}부터 재개)")
-            else:
-                model.load_state_dict(ckpt)
-                print(f"⚠️ 단순 가중치 로드 완료: {checkpoint_path}")
+    # 5. 체크포인트 로드 (재개용 .pth 우선, 없으면 safetensors 가중치만)
+    if resume_ckpt_path.exists():
+        start_epoch, best_acc_from_file, best_loss_from_file, early_stop_counter_from_file = (
+            load_training_checkpoint(resume_ckpt_path, model, optimizer, scheduler, device)
+        )
+        print(
+            f"✅ 학습 재개 체크포인트 로드: {resume_ckpt_path.name} "
+            f"(Epoch {start_epoch + 1}부터, best_acc={best_acc_from_file:.2%})"
+        )
+    elif best_weights_path:
+        weights = load_file(str(best_weights_path))
+        model.load_state_dict(weights)
+        with safe_open(str(best_weights_path), framework="pt") as f:
+            metadata = f.metadata() or {}
+        if metadata.get("epoch") is not None:
+            start_epoch = int(metadata["epoch"]) + 1
+        if metadata.get("best_acc") is not None:
+            best_acc_from_file = float(metadata["best_acc"])
+        print(
+            f"✅ safetensors 가중치 로드 (Fine-tuning 모드): {best_weights_path.name} "
+            f"(best_acc={best_acc_from_file:.2%}, epoch 메타={metadata.get('epoch', '없음')})"
+        )
 
     # 데이터 비율을 고려하여 졸음에 1.6배 가중치 부여
     weights = torch.tensor([17.0, 1.0], device=device) # [drowsy, normal] 순서
@@ -348,5 +416,7 @@ if __name__ == '__main__':
         model_prefix=model_prefix,
         model_out_dir=model_out_dir,
         model_name=model_name,
-        start_epoch=start_epoch, # 추출한 시작 에포크 전달
+        start_epoch=start_epoch,
+        initial_best_loss=best_loss_from_file,
+        initial_early_stop_counter=early_stop_counter_from_file,
     )
